@@ -55,8 +55,6 @@ parser.add_argument('--weight_decay', type = float, default = 0.0001)
 parser.add_argument('--data_dir', type=str, default=util.io.get_absolute_path('~/dataset/cifar10'),
                     help='Path to the CIFAR-10 data directory.')
 
-parser.add_argument('--use_fp16', type=bool, default=False,
-                    help='Train the model using fp16.')
 
 FLAGS = parser.parse_args()
 
@@ -73,9 +71,6 @@ NUM_EPOCHS_PER_DECAY = 350.0      # Epochs after which learning rate decays.
 LEARNING_RATE_DECAY_FACTOR = 0.1  # Learning rate decay factor.
 INITIAL_LEARNING_RATE = 0.1       # Initial learning rate.
 
-# If a model is trained with multiple GPUs, prefix all Op names with tower_name
-# to differentiate the operations. Note that this prefix is removed from the
-# names of the summaries when visualizing a model.
 TOWER_NAME = 'tower'
 
 DATA_URL = 'https://www.cs.toronto.edu/~kriz/cifar-10-binary.tar.gz'
@@ -99,49 +94,6 @@ def _activation_summary(x):
   tf.summary.scalar(tensor_name + '/sparsity',
                                        tf.nn.zero_fraction(x))
 
-
-def _variable_on_cpu(name, shape, initializer):
-  """Helper to create a Variable stored on CPU memory.
-
-  Args:
-    name: name of the variable
-    shape: list of ints
-    initializer: initializer for Variable
-
-  Returns:
-    Variable Tensor
-  """
-  with tf.device('/cpu:0'):
-    dtype = tf.float16 if FLAGS.use_fp16 else tf.float32
-    var = tf.get_variable(name, shape, initializer=initializer, dtype=dtype)
-  return var
-
-
-def _variable_with_weight_decay(name, shape, stddev, wd):
-  """Helper to create an initialized Variable with weight decay.
-
-  Note that the Variable is initialized with a truncated normal distribution.
-  A weight decay is added only if one is specified.
-
-  Args:
-    name: name of the variable
-    shape: list of ints
-    stddev: standard deviation of a truncated Gaussian
-    wd: add L2Loss weight decay multiplied by this float. If None, weight
-        decay is not added for this Variable.
-
-  Returns:
-    Variable Tensor
-  """
-  dtype = tf.float16 if FLAGS.use_fp16 else tf.float32
-  var = _variable_on_cpu(
-      name,
-      shape,
-      tf.truncated_normal_initializer(stddev=stddev, dtype=dtype))
-  if wd is not None:
-    weight_decay = tf.multiply(tf.nn.l2_loss(var), wd, name='weight_loss')
-    tf.add_to_collection('losses', weight_decay)
-  return var
 
 
 def distorted_inputs():
@@ -208,7 +160,7 @@ def inference(images):
   with slim.arg_scope([slim.conv2d], weights_regularizer = slim.l2_regularizer(FLAGS.weight_decay)):
     with slim.arg_scope([slim.conv2d, slim.max_pool2d], padding='SAME'):
         # Block1
-        net = slim.repeat(inputs, 1, slim.conv2d, 16, [3, 3], scope='conv1')
+        net = slim.repeat(images, 1, slim.conv2d, 16, [3, 3], scope='conv1')
         net = slim.max_pool2d(net, [2, 2], scope='pool1')
 
         # Block 2.
@@ -223,31 +175,74 @@ def inference(images):
         net = slim.repeat(net, 1, slim.conv2d, 128, [3, 3], scope='conv4')
         net = slim.max_pool2d(net, [2, 2], scope='pool4')
 
-        import pdb
-        pdb.set_trace()
 
-    logits = slim.conv2d(net, 1, [1, 1], scope = 'score', activation_fn = None,
-        bias_initializer = util.tf.focal_loss_layer_initializer()[1])
+    logits = slim.conv2d(net, 1, [2, 2], scope = 'score', activation_fn = None,
+        biases_initializer = util.tf.focal_loss_layer_initializer()[1],
+        padding = 'VALID'
+    )
   return logits
 
 
+
 def loss(logits, labels):
-  """Add L2Loss to all the trainable variables.
-
-  Add summary for "Loss" and "Loss/avg".
-  Args:
-    logits: Logits from inference().
-    labels: Labels from distorted_inputs or inputs(). 1-D tensor
-            of shape [batch_size]
-
-  Returns:
-    Loss tensor of type float.
-  """
-  # Calculate the average cross entropy loss across the batch.
+  logits = logits[:, 0, 0, 0]
   labels = tf.equal(labels, 1)
   labels = tf.cast(labels, tf.int64)
-  loss = util.tf.focal_loss(labels = label, logits = logits)
-  tf.add_to_collection('losses', cross_entropy_mean)
+  
+  if FLAGS.loss_type == 'focal_loss':
+      loss = util.tf.focal_loss(labels = labels, logits = logits)
+  elif FLAGS.loss_type == 'ce_loss':
+      ce_loss = tf.nn.sigmoid_cross_entropy_with_logits(
+          labels = labels, logits = logits)
+      loss = tf.reduce_sum(ce_loss)
+  elif FLAGS.loss_type == 'cls_balance':
+      ce_loss = tf.nn.sigmoid_cross_entropy_with_logits(
+          labels = labels, logits = logits)
+      pos_weight = tf.cast(tf.equal(labels, 1), tf.float32)
+      neg_weight = 1 - pos_weight
+      
+      n_pos = tf.reduce_sum(pos_weight)
+      n_neg = tf.reduce_sum(neg_weight)
+      
+      def has_pos():
+          return tf.reduce_sum(ce_loss * pos_weight) / n_pos
+      def has_neg(): 
+          return tf.reduce_sum(ce_loss * neg_weight) / n_neg
+      def no():
+          return tf.constance(0.0)
+      pos_loss = tf.cond(n_pos > 0, has_pos, no)
+      neg_loss = tf.cond(n_neg > 0, has_neg, no)
+      loss = (pos_loss + neg_loss) / 2.0
+      
+  elif FLAGS.loss_type == 'ohem':
+      ce_loss = tf.nn.sigmoid_cross_entropy_with_logits(
+          labels = labels, logits = logits)
+      pos_weight = tf.cast(tf.equal(labels, 1), tf.float32)
+      
+      n_pos = tf.reduce_sum(pos_weight)
+      n_neg = tf.reduce_sum(neg_weight)
+      
+      scores = util.tf.sigmoid(logits)
+      neg_mask = tf.equal(labels, 1)
+      neg_scores = tf.where(neg_mask, scores, tf.zeros_like(scores))
+      
+      # find the most wrongly classified negative examples:
+      n_selected = tf.minimum(n_pos * 3, n_neg)
+      n_selected = tf.maximum(n_selected, 1)
+      vals, _ = tf.nn.top_k(neg_scores, k = n_selected)
+      th = vals[-1]
+      selected_neg_mask = tf.logical_and(scores > th, neg_mask)
+      neg_weight = tf.cast(selected_neg_mask, tf.float32)
+      
+      loss_weight = pos_weight + neg_weight
+      loss = tf.reduce_sum(ce_loss * loss_weight) / tf.reduce_sum(loss_weight)
+      
+  else:
+      raise ValueError('Unknow loss_type:', FLAGS.loss_type)
+      
+        
+          
+  tf.add_to_collection('losses', loss)
 
   # The total loss is defined as the cross entropy loss plus all of the weight
   # decay terms (L2 loss).

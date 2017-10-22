@@ -40,7 +40,7 @@ import time
 
 import numpy as np
 import tensorflow as tf
-
+slim = tf.contrib.slim
 import cifar10
 
 parser = cifar10.parser
@@ -62,13 +62,13 @@ parser.add_argument('--run_once', type=bool, default=False,
                     help='Whether to run eval only once.')
 
 
-def eval_once(saver, summary_writer, top_k_op, summary_op):
+def eval_once(saver, summary_writer, num_pos, num_tp, num_fp, summary_op):
   """Run Eval once.
 
   Args:
     saver: Saver.
     summary_writer: Summary writer.
-    top_k_op: Top K op.
+    corrects: Top K op.
     summary_op: Summary op.
   """
 
@@ -94,21 +94,36 @@ def eval_once(saver, summary_writer, top_k_op, summary_op):
                                          start=True))
 
       num_iter = int(math.ceil(FLAGS.num_examples / FLAGS.batch_size))
-      true_count = 0  # Counts the number of correct predictions.
+      label_count = 0  # Counts the number of correct predictions.
+      tp_count = 0
+      fp_count = 0
+      
       total_sample_count = num_iter * FLAGS.batch_size
       step = 0
       while step < num_iter and not coord.should_stop():
-        predictions = sess.run([top_k_op])
-        true_count += np.sum(predictions)
+        n_pos, n_tp, n_fp = sess.run([num_pos, num_tp, num_fp])
+        label_count += n_pos
+        tp_count += n_tp
+        fp_count += n_fp
         step += 1
 
-      # Compute precision @ 1.
-      precision = true_count / total_sample_count
-      print('%s: precision @ step %d = %.3f' % (datetime.now(), int(global_step), precision))
+      # Compute p, r, f
+      if tp_count + fp_count > 0:
+          precision = tp_count / (tp_count + fp_count)
+      else:
+          precision = 0.0
+      recall = tp_count / label_count
+      if precision * recall > 0:
+          fmean = 2.0 / (1.0 / precision + 1.0 / recall)
+      else:
+          fmean = 0
+      print('step %r: P = %.3f, R = %.3f, F = %.3f' % (int(global_step), precision, recall, fmean))
 
       summary = tf.Summary()
       summary.ParseFromString(sess.run(summary_op))
-      summary.value.add(tag='Precision @ 1', simple_value=precision)
+      summary.value.add(tag='Precision', simple_value=precision)
+      summary.value.add(tag='Recall', simple_value=recall)
+      summary.value.add(tag='Fmean', simple_value=fmean)
       summary_writer.add_summary(summary, global_step)
     except Exception as e:  # pylint: disable=broad-except
       coord.request_stop(e)
@@ -128,14 +143,21 @@ def evaluate():
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
-    logits = cifar10.inference(images)
+    logits = cifar10.inference(images)[:, 0, 0, 0]
 
-    scores = slim.sigmoid(logits)
+    scores = util.tf.sigmoid(logits)
     predicted = tf.cast(scores > 0.5, dtype = tf.int32)
-
+    
     # Calculate predictions.
-    top_k_op = tf.nn.in_top_k(predicted, labels, 1)
-
+    predicted_positive = tf.equal(predicted, 1)
+    label_positive = tf.equal(labels, 1)
+    tp = tf.logical_and(predicted_positive, label_positive)
+    fp = tf.logical_and(predicted_positive, tf.logical_not(label_positive))
+    
+    num_pos = tf.reduce_sum(tf.cast(labels, dtype = tf.float32))
+    num_tp = tf.reduce_sum(tf.cast(tp, tf.float32))
+    num_fp = tf.reduce_sum(tf.cast(fp, tf.float32))
+    
     # Restore the moving average version of the learned variables for eval.
     variable_averages = tf.train.ExponentialMovingAverage(
         cifar10.MOVING_AVERAGE_DECAY)
@@ -149,7 +171,7 @@ def evaluate():
 
     while True:
         for _ in util.tf.wait_for_checkpoint(FLAGS.checkpoint_dir):
-            eval_once(saver, summary_writer, top_k_op, summary_op)
+            eval_once(saver, summary_writer, num_pos, num_tp, num_fp, summary_op)
 
 
 def main(argv=None):  # pylint: disable=unused-argument

@@ -13,25 +13,6 @@
 # limitations under the License.
 # ==============================================================================
 
-"""A binary to train CIFAR-10 using a single GPU.
-
-Accuracy:
-cifar10_train.py achieves ~86% accuracy after 100K steps (256 epochs of
-data) as judged by cifar10_eval.py.
-
-Speed: With batch_size 128.
-
-System        | Step Time (sec/batch)  |     Accuracy
-------------------------------------------------------------------
-1 Tesla K20m  | 0.35-0.60              | ~86% at 60K steps  (5 hours)
-1 Tesla K40m  | 0.25-0.35              | ~86% at 100K steps (4 hours)
-
-Usage:
-Please see the tutorial and website for how to download the CIFAR-10
-data set, compile the program and train the model.
-
-http://tensorflow.org/tutorials/deep_cnn/
-"""
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -41,15 +22,15 @@ import time
 
 import tensorflow as tf
 
+import util
 import cifar10
 
 parser = cifar10.parser
-import util
 parser.add_argument('--train_dir', type=str, default= util.io.get_absolute_path('~/models/cifar10/origin_code'),
                     help='Directory where to write event logs and checkpoint.')
 parser.add_argument('--max_steps', type=int, default=1000000,
                     help='Number of batches to run.')
-
+parser.add_argument('--loss_type', type=str, default = 'focal_loss')
 parser.add_argument('--log_device_placement', type=bool, default=False,
                     help='Whether to log device placement.')
 
@@ -116,7 +97,8 @@ def train():
         mon_sess.run(train_op)
 
 def main(argv=None):  # pylint: disable=unused-argument
-  train()
+    cifar10.maybe_download_and_extract()
+    train()
 
 
 if __name__ == '__main__':
