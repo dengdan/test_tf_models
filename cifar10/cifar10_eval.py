@@ -124,12 +124,17 @@ def evaluate():
     eval_data = FLAGS.eval_data == 'test'
     images, labels = cifar10.inputs(eval_data=eval_data)
 
+    labels = tf.cast(tf.equal(labels, 1), dtype = tf.int32)
+
     # Build a Graph that computes the logits predictions from the
     # inference model.
     logits = cifar10.inference(images)
 
+    scores = slim.sigmoid(logits)
+    predicted = tf.cast(scores > 0.5, dtype = tf.int32)
+
     # Calculate predictions.
-    top_k_op = tf.nn.in_top_k(logits, labels, 1)
+    top_k_op = tf.nn.in_top_k(predicted, labels, 1)
 
     # Restore the moving average version of the learned variables for eval.
     variable_averages = tf.train.ExponentialMovingAverage(

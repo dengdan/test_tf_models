@@ -47,7 +47,6 @@ parser = cifar10.parser
 import util
 parser.add_argument('--train_dir', type=str, default= util.io.get_absolute_path('~/models/cifar10/origin_code'),
                     help='Directory where to write event logs and checkpoint.')
-
 parser.add_argument('--max_steps', type=int, default=1000000,
                     help='Number of batches to run.')
 
