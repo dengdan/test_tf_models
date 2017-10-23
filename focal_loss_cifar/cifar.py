@@ -158,9 +158,11 @@ def inference(images):
                 # Block 4.
                 net = slim.conv2d(net, 128, [3, 3], scope='conv4')
                 net = slim.max_pool2d(net, [2, 2], scope='pool4')
-
+                
+        weight_init, bias_init = util.tf.focal_loss_layer_initializer()
         logits = slim.conv2d(net, 1, [2, 2], scope = 'score', activation_fn = None,
-                                                biases_initializer = util.tf.focal_loss_layer_initializer()[1],
+                                                weights_initializer = weight_init, 
+                                                biases_initializer = bias_init,
                                                 padding = 'VALID'
         )
 #         if FLAGS.loss_type == 'focal_loss':
@@ -179,7 +181,7 @@ def loss(logits, labels):
     labels = tf.cast(labels, tf.float32)
     
     if FLAGS.loss_type == 'focal_loss':
-            loss = util.tf.focal_loss(labels = labels, logits = logits)
+            loss = util.tf.focal_loss(labels = labels, logits = logits, gamma = 2, alpha = 0.75)
     elif FLAGS.loss_type == 'ce_loss':
             ce_loss = tf.nn.sigmoid_cross_entropy_with_logits(
                     labels = labels, logits = logits)
@@ -225,7 +227,19 @@ def loss(logits, labels):
             
             loss_weight = pos_weight + neg_weight
             loss = tf.reduce_sum(ce_loss * loss_weight) / tf.reduce_sum(loss_weight)
-            
+    elif FLAGS.loss_type == 'ohem_all':
+            ce_loss = tf.nn.sigmoid_cross_entropy_with_logits(
+                    labels = labels, logits = logits)
+            scores = util.tf.sigmoid(logits)
+            hardness = tf.where(labels > 0, 1 - scores, scores)
+            # find the most wrongly classified examples:
+            num_examples = tf.reduce_prod(labels.shape)
+            n_selected = tf.cast(num_examples / 2, tf.int32)
+            vals, _ = tf.nn.top_k(hardness, k = n_selected)
+            th = vals[-1]
+            selected_mask = hardness >= th
+            loss_weight = tf.cast(selected_mask, tf.float32) 
+            loss = tf.reduce_sum(ce_loss * loss_weight) / tf.reduce_sum(loss_weight)
     else:
             raise ValueError('Unknow loss_type:', FLAGS.loss_type)
             
