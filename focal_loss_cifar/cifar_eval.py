@@ -13,23 +13,6 @@
 # limitations under the License.
 # ==============================================================================
 
-"""Evaluation for CIFAR-10.
-
-Accuracy:
-cifar10_train.py achieves 83.0% accuracy after 100K steps (256 epochs
-of data) as judged by cifar10_eval.py.
-
-Speed:
-On a single Tesla K40, cifar10_train.py processes a single batch of 128 images
-in 0.25-0.35 sec (i.e. 350 - 600 images /sec). The model reaches ~86%
-accuracy after 100K steps in 8 hours of training time.
-
-Usage:
-Please see the tutorial and website for how to download the CIFAR-10
-data set, compile the program and train the model.
-
-http://tensorflow.org/tutorials/deep_cnn/
-"""
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -41,17 +24,21 @@ import time
 import numpy as np
 import tensorflow as tf
 slim = tf.contrib.slim
-import cifar10
+import cifar
 
-parser = cifar10.parser
 import util
-parser.add_argument('--eval_dir', type=str, default= util.io.get_absolute_path('~/models/cifar10/origin_code/eval'),
+parser = cifar.parser
+
+parser.add_argument('--loss_type', type=str, default = 'focal_loss', 
+                    help = 'loss type')
+
+parser.add_argument('--eval_dir', type=str, 
                     help='Directory where to write event logs.')
 
 parser.add_argument('--eval_data', type=str, default='test',
                     help='Either `test` or `train_eval`.')
 
-parser.add_argument('--checkpoint_dir', type=str, default= util.io.get_absolute_path('~/models/cifar10/origin_code'),
+parser.add_argument('--checkpoint_dir', type=str, 
                     help='Directory where to read model checkpoints.')
 
 
@@ -78,7 +65,7 @@ def eval_once(saver, summary_writer, num_pos, num_tp, num_fp, summary_op):
       # Restores from checkpoint
       saver.restore(sess, ckpt.model_checkpoint_path)
       # Assuming model_checkpoint_path looks something like:
-      #   /my-favorite-path/cifar10_train/model.ckpt-0,
+      #   /my-favorite-path/cifar_train/model.ckpt-0,
       # extract global_step from it.
       global_step = ckpt.model_checkpoint_path.split('/')[-1].split('-')[-1]
     else:
@@ -117,7 +104,8 @@ def eval_once(saver, summary_writer, num_pos, num_tp, num_fp, summary_op):
           fmean = 2.0 / (1.0 / precision + 1.0 / recall)
       else:
           fmean = 0
-      print('step %r: P = %.3f, R = %.3f, F = %.3f' % (int(global_step), precision, recall, fmean))
+      print('step %r in %s on %s: P = %.3f, R = %.3f, F = %.3f' % (int(global_step), 
+                       FLAGS.loss_type, FLAGS.dataset, precision, recall, fmean))
 
       summary = tf.Summary()
       summary.ParseFromString(sess.run(summary_op))
@@ -135,15 +123,15 @@ def eval_once(saver, summary_writer, num_pos, num_tp, num_fp, summary_op):
 def evaluate():
   """Eval CIFAR-10 for a number of steps."""
   with tf.Graph().as_default() as g:
-    # Get images and labels for CIFAR-10.
+    # Get images and labels for CIFAR.
     eval_data = FLAGS.eval_data == 'test'
-    images, labels = cifar10.inputs(eval_data=eval_data)
+    images, labels = cifar.inputs(eval_data=eval_data, is_cifar10 = FLAGS.dataset == 'cifar-10')
 
     labels = tf.cast(tf.equal(labels, 1), dtype = tf.int32)
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
-    logits = cifar10.inference(images)[:, 0, 0, 0]
+    logits = cifar.inference(images)[:, 0, 0, 0]
 
     scores = util.tf.sigmoid(logits)
     predicted = tf.cast(scores > 0.5, dtype = tf.int32)
@@ -160,7 +148,7 @@ def evaluate():
     
     # Restore the moving average version of the learned variables for eval.
     variable_averages = tf.train.ExponentialMovingAverage(
-        cifar10.MOVING_AVERAGE_DECAY)
+        cifar.MOVING_AVERAGE_DECAY)
     variables_to_restore = variable_averages.variables_to_restore()
     saver = tf.train.Saver(variables_to_restore)
 
@@ -181,4 +169,5 @@ def main(argv=None):  # pylint: disable=unused-argument
 
 if __name__ == '__main__':
   FLAGS = parser.parse_args()
+  util.proc.set_proc_name('eval_on_%s_%s'%(FLAGS.dataset, FLAGS.loss_type))
   tf.app.run()
