@@ -49,7 +49,7 @@ NUM_EXAMPLES_PER_EPOCH_FOR_EVAL = cifar_input.NUM_EXAMPLES_PER_EPOCH_FOR_EVAL
 MOVING_AVERAGE_DECAY = 0.9999         # The decay to use for the moving average.
 NUM_EPOCHS_PER_DECAY = 350.0            # Epochs after which learning rate decays.
 LEARNING_RATE_DECAY_FACTOR = 0.1    # Learning rate decay factor.
-INITIAL_LEARNING_RATE = 0.00001             # Initial learning rate.
+INITIAL_LEARNING_RATE = 0.1             # Initial learning rate.
 # 0.01, 0.00001 for ce_loss of cifar-10 and 100
 
 
@@ -183,7 +183,7 @@ def loss(logits, labels):
     elif FLAGS.loss_type == 'ce_loss':
             ce_loss = tf.nn.sigmoid_cross_entropy_with_logits(
                     labels = labels, logits = logits)
-            loss = tf.reduce_sum(ce_loss) / tf.reduce_sum(labels)
+            loss = tf.reduce_sum(ce_loss) / tf.cast(tf.reduce_prod(tf.shape(labels)), tf.float32)
     elif FLAGS.loss_type == 'cls_balance':
             ce_loss = tf.nn.sigmoid_cross_entropy_with_logits(
                     labels = labels, logits = logits)
@@ -333,14 +333,14 @@ def maybe_download_and_extract():
     filename = DATA_URL.split('/')[-1]
     filepath = os.path.join(dest_directory, filename)
     if not os.path.exists(filepath):
-                def _progress(count, block_size, total_size):
-                        sys.stdout.write('\r>> Downloading %s %.1f%%' % (filename,
-                                float(count * block_size) / float(total_size) * 100.0))
-                        sys.stdout.flush()
-                        filepath, _ = urllib.request.urlretrieve(DATA_URL, filepath, _progress)
-                        print()
-                        statinfo = os.stat(filepath)
-                        print('Successfully downloaded', filename, statinfo.st_size, 'bytes.')
+        def _progress(count, block_size, total_size):
+                sys.stdout.write('\r>> Downloading %s %.1f%%' % (filename,
+                        float(count * block_size) / float(total_size) * 100.0))
+                sys.stdout.flush()
+        filepath, _ = urllib.request.urlretrieve(DATA_URL, filepath, _progress)
+        print()
+        statinfo = os.stat(filepath)
+        print('Successfully downloaded', filename, statinfo.st_size, 'bytes.')
     extracted_dir_path = os.path.join(dest_directory, '%s-binary'%(FLAGS.dataset))
     if not os.path.exists(extracted_dir_path):
                 if not util.str.contains(extracted_dir_path, 'cifar-100'):
