@@ -2,12 +2,12 @@ set -x
 set -e
 export CUDA_VISIBLE_DEVICES=$1
 LOSS_TYPE=focal_loss
-DATASET=$2 #cifar-100
-FOCAL_LOSS_ALPHA=$3
+DATASET=cifar-100
+FOCAL_LOSS_ALPHA=$2
 
 
 DATA_DIR=~/dataset/${DATASET}
-TRAIN_DIR=~/models/${DATASET}/${LOSS_TYPE}_alpha_${FOCAL_LOSS_ALPHA}
+TRAIN_DIR=~/models_focal_loss/${DATASET}/${LOSS_TYPE}_alpha_${FOCAL_LOSS_ALPHA}
 
 if [ ! -d "$TRAIN_DIR" ]; then
     mkdir -p $TRAIN_DIR

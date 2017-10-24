@@ -38,7 +38,6 @@ parser.add_argument('--data_dir', type=str,
                                         help='Path to the CIFAR data directory.')
 parser.add_argument('--dataset', type=str,
                                         help='cifar10 or 100.')
-
 # Global constants describing the CIFAR data set.
 IMAGE_SIZE = cifar_input.IMAGE_SIZE
 NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN = cifar_input.NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN
@@ -188,10 +187,10 @@ def focal_loss(labels, logits, gamma, alpha, normalize = True):
 
     fl = tf.reduce_sum(fl)
     if normalize:
-        #n_pos = tf.reduce_sum(labels)
-        #fl = fl / tf.cast(n_pos, tf.float32)
-        total_weights = tf.stop_gradient(tf.reduce_sum(focal_matrix))
-        fl = fl / total_weights
+        n_pos = tf.reduce_sum(labels)
+        fl = fl / tf.cast(n_pos, tf.float32)
+#         total_weights = tf.stop_gradient(tf.reduce_sum(focal_matrix))
+#         fl = fl / total_weights
     return fl
 
 def loss(logits, labels):
@@ -206,7 +205,8 @@ def loss(logits, labels):
     elif FLAGS.loss_type == 'ce_loss':
             ce_loss = tf.nn.sigmoid_cross_entropy_with_logits(
                     labels = labels, logits = logits)
-            loss = tf.reduce_sum(ce_loss) / tf.cast(tf.reduce_prod(tf.shape(labels)), tf.float32)
+            num_samples = tf.cast(tf.reduce_prod(tf.shape(labels)), tf.float32)
+            loss = tf.reduce_sum(ce_loss) / num_samples
     elif FLAGS.loss_type == 'cls_balance':
             ce_loss = tf.nn.sigmoid_cross_entropy_with_logits(
                     labels = labels, logits = logits)
@@ -226,7 +226,7 @@ def loss(logits, labels):
             neg_loss = tf.cond(n_neg > 0, has_neg, no)
             loss = (pos_loss + neg_loss) / 2.0
             
-    elif FLAGS.loss_type == 'ohem':
+    elif FLAGS.loss_type == 'ohnm':
             ce_loss = tf.nn.sigmoid_cross_entropy_with_logits(
                     labels = labels, logits = logits)
             pos_weight = tf.cast(tf.equal(labels, 1), tf.float32)
@@ -234,31 +234,29 @@ def loss(logits, labels):
             n_pos = tf.reduce_sum(pos_weight)
             n_neg = tf.reduce_sum(neg_weight)
             
-            scores = util.tf.sigmoid(logits)
-            neg_mask = tf.equal(labels, 0)
-            neg_scores = tf.where(neg_mask, scores, tf.zeros_like(scores))
             
             # find the most wrongly classified negative examples:
             n_selected = tf.minimum(n_pos * 3, n_neg)
             n_selected = tf.cast(tf.maximum(n_selected, 1), tf.int32)
+            
+            neg_mask = tf.equal(labels, 0)
+            hardness = tf.where(neg_mask, ce_loss, tf.zeros_like(ce_loss))
             vals, _ = tf.nn.top_k(neg_scores, k = n_selected)
             th = vals[-1]
-            selected_neg_mask = tf.logical_and(scores >= th, neg_mask)
+            selected_neg_mask = tf.logical_and(hardness >= th, neg_mask)
             neg_weight = tf.cast(selected_neg_mask, tf.float32)
             
             loss_weight = pos_weight + neg_weight
             loss = tf.reduce_sum(ce_loss * loss_weight) / tf.reduce_sum(loss_weight)
-    elif FLAGS.loss_type == 'ohem_all':
+    elif FLAGS.loss_type == 'ohem':
             ce_loss = tf.nn.sigmoid_cross_entropy_with_logits(
                     labels = labels, logits = logits)
-            scores = util.tf.sigmoid(logits)
-            hardness = tf.where(labels > 0, 1 - scores, scores)
             # find the most wrongly classified examples:
             num_examples = tf.reduce_prod(labels.shape)
             n_selected = tf.cast(num_examples / 2, tf.int32)
-            vals, _ = tf.nn.top_k(hardness, k = n_selected)
+            vals, _ = tf.nn.top_k(ce_loss, k = n_selected)
             th = vals[-1]
-            selected_mask = hardness >= th
+            selected_mask = ce_loss >= th
             loss_weight = tf.cast(selected_mask, tf.float32) 
             loss = tf.reduce_sum(ce_loss * loss_weight) / tf.reduce_sum(loss_weight)
     else:
