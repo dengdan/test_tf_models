@@ -46,11 +46,9 @@ NUM_EXAMPLES_PER_EPOCH_FOR_EVAL = cifar_input.NUM_EXAMPLES_PER_EPOCH_FOR_EVAL
 
 # Constants describing the training process.
 MOVING_AVERAGE_DECAY = 0.9999         # The decay to use for the moving average.
-NUM_EPOCHS_PER_DECAY = 350.0            # Epochs after which learning rate decays.
 LEARNING_RATE_DECAY_FACTOR = 0.1    # Learning rate decay factor.
 INITIAL_LEARNING_RATE = 0.1             # Initial learning rate.
-# 0.01, 0.00001 for ce_loss of cifar-10 and 100
-
+DECAY_STEPS = 200000 # decay rate for lr 
 
 def get_data_url():
         FLAGS = parser.parse_args()
@@ -313,11 +311,12 @@ def train(total_loss, global_step):
     """
     # Variables that affect learning rate.
     FLAGS = parser.parse_args()
-    num_batches_per_epoch = NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN / FLAGS.batch_size
-    decay_steps = 200000
+    decay_steps = DECAY_STEPS
 
     # Decay the learning rate exponentially based on the number of steps.
     lr = INITIAL_LEARNING_RATE
+    if FLAGS.dataset == 'cifar-100':
+        lr /= 10
     lr = tf.train.exponential_decay(lr,
                                                             global_step,
                                                             decay_steps,
