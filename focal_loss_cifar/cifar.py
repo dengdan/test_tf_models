@@ -174,22 +174,26 @@ def focal_loss(labels, logits, gamma, alpha, normalize = True):
     labels = tf.where(labels > 0, tf.ones_like(labels), tf.zeros_like(labels))
     labels = tf.cast(labels, tf.float32)
     probs = tf.sigmoid(logits)
-    CE = tf.nn.sigmoid_cross_entropy_with_logits(labels = labels, logits = logits)
+    ce_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels = labels, logits = logits)
 
     alpha_t = tf.ones_like(logits) * alpha
     alpha_t = tf.where(labels > 0, alpha_t, 1.0 - alpha_t)
     probs_t = tf.where(labels > 0, probs, 1.0 - probs)
 
     focal_matrix = alpha_t * tf.pow((1.0 - probs_t), gamma)
-    fl = focal_matrix * CE
+    loss = focal_matrix * ce_loss
 
-    fl = tf.reduce_sum(fl)
+    loss = tf.reduce_sum(loss)
     if normalize:
         n_pos = tf.reduce_sum(labels)
-        fl = fl / tf.cast(n_pos, tf.float32)
-#         total_weights = tf.stop_gradient(tf.reduce_sum(focal_matrix))
-#         fl = fl / total_weights
-    return fl
+        def has_pos():
+            return loss / tf.cast(n_pos, tf.float32)
+        def no_pos():
+            total_weights = tf.stop_gradient(tf.reduce_sum(focal_matrix))
+            return loss / total_weights
+        
+        loss = tf.cond(n_pos > 0, has_pos, no_pos)
+    return loss
 
 def loss(logits, labels):
     FLAGS = parser.parse_args()
@@ -315,8 +319,6 @@ def train(total_loss, global_step):
 
     # Decay the learning rate exponentially based on the number of steps.
     lr = INITIAL_LEARNING_RATE
-    if FLAGS.dataset == 'cifar-100':
-        lr /= 10
     lr = tf.train.exponential_decay(lr,
                                                             global_step,
                                                             decay_steps,
