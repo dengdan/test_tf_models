@@ -28,6 +28,10 @@ parser = cifar.parser
 parser.add_argument('--train_dir', type=str, default= util.io.get_absolute_path('~/models/cifar/origin_code'),
                     help='Directory where to write event logs and checkpoint.')
 parser.add_argument('--loss_type', type=str, default = 'focal_loss', help = 'loss type')
+
+parser.add_argument('--focal_loss_alpha', type=float, default = 0.25, help = 'alpha weight of focal loss')
+parser.add_argument('--focal_loss_gamma', type=float, default = 2.0, help = 'gamma of focal loss')
+
 parser.add_argument('--max_steps', type=int, default=1000000,
                     help='Number of batches to run.')
 parser.add_argument('--log_device_placement', type=bool, default=False,

@@ -173,6 +173,26 @@ def inference(images):
     return logits
 
 
+def focal_loss(labels, logits, gamma, alpha, normalize = True):
+    labels = tf.where(labels > 0, tf.ones_like(labels), tf.zeros_like(labels))
+    labels = tf.cast(labels, tf.float32)
+    probs = tf.sigmoid(logits)
+    CE = tf.nn.sigmoid_cross_entropy_with_logits(labels = labels, logits = logits)
+
+    alpha_t = tf.ones_like(logits) * alpha
+    alpha_t = tf.where(labels > 0, alpha_t, 1.0 - alpha_t)
+    probs_t = tf.where(labels > 0, probs, 1.0 - probs)
+
+    focal_matrix = alpha_t * tf.pow((1.0 - probs_t), gamma)
+    fl = focal_matrix * CE
+
+    fl = tf.reduce_sum(fl)
+    if normalize:
+        #n_pos = tf.reduce_sum(labels)
+        #fl = fl / tf.cast(n_pos, tf.float32)
+        total_weights = tf.stop_gradient(tf.reduce_sum(focal_matrix))
+        fl = fl / total_weights
+    return fl
 
 def loss(logits, labels):
     FLAGS = parser.parse_args()
@@ -181,7 +201,8 @@ def loss(logits, labels):
     labels = tf.cast(labels, tf.float32)
     
     if FLAGS.loss_type == 'focal_loss':
-            loss = util.tf.focal_loss(labels = labels, logits = logits, gamma = 2, alpha = 0.75)
+            loss = focal_loss(labels = labels, logits = logits, 
+                                      gamma = FLAGS.focal_loss_gamma, alpha = FLAGS.focal_loss_alpha)
     elif FLAGS.loss_type == 'ce_loss':
             ce_loss = tf.nn.sigmoid_cross_entropy_with_logits(
                     labels = labels, logits = logits)
