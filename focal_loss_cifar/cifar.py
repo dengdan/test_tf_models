@@ -186,12 +186,15 @@ def focal_loss(labels, logits, gamma, alpha, normalize = True):
     loss = tf.reduce_sum(loss)
     if normalize:
         n_pos = tf.reduce_sum(labels)
+        total_weights = tf.stop_gradient(tf.reduce_sum(focal_matrix))
+        total_weights = tf.Print(total_weights, [n_pos, total_weights])
+#         loss = loss / total_weights
         def has_pos():
             return loss / tf.cast(n_pos, tf.float32)
         def no_pos():
-            total_weights = tf.stop_gradient(tf.reduce_sum(focal_matrix))
-            return loss / total_weights
-        
+            #total_weights = tf.stop_gradient(tf.reduce_sum(focal_matrix))
+            #return loss / total_weights
+            return loss
         loss = tf.cond(n_pos > 0, has_pos, no_pos)
     return loss
 
@@ -331,6 +334,8 @@ def train(total_loss, global_step):
 
     # Compute gradients.
     with tf.control_dependencies([loss_averages_op]):
+        if FLAGS.dataset == 'cifar-100':
+            lr /= 10
         opt = tf.train.GradientDescentOptimizer(lr)
         grads = opt.compute_gradients(total_loss)
 
