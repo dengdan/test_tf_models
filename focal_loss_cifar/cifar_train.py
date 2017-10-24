@@ -13,25 +13,6 @@
 # limitations under the License.
 # ==============================================================================
 
-"""A binary to train CIFAR-10 using a single GPU.
-
-Accuracy:
-cifar10_train.py achieves ~86% accuracy after 100K steps (256 epochs of
-data) as judged by cifar10_eval.py.
-
-Speed: With batch_size 128.
-
-System        | Step Time (sec/batch)  |     Accuracy
-------------------------------------------------------------------
-1 Tesla K20m  | 0.35-0.60              | ~86% at 60K steps  (5 hours)
-1 Tesla K40m  | 0.25-0.35              | ~86% at 100K steps (4 hours)
-
-Usage:
-Please see the tutorial and website for how to download the CIFAR-10
-data set, compile the program and train the model.
-
-http://tensorflow.org/tutorials/deep_cnn/
-"""
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -41,43 +22,45 @@ import time
 
 import tensorflow as tf
 
-import cifar10
-
-parser = cifar10.parser
 import util
-parser.add_argument('--train_dir', type=str, default= util.io.get_absolute_path('~/models/cifar10/origin_code'),
+import cifar
+parser = cifar.parser
+parser.add_argument('--train_dir', type=str, default= util.io.get_absolute_path('~/models/cifar/origin_code'),
                     help='Directory where to write event logs and checkpoint.')
+parser.add_argument('--loss_type', type=str, default = 'focal_loss', help = 'loss type')
+
+parser.add_argument('--focal_loss_alpha', type=float, default = 0.25, help = 'alpha weight of focal loss')
+parser.add_argument('--focal_loss_gamma', type=float, default = 2.0, help = 'gamma of focal loss')
+
 parser.add_argument('--max_steps', type=int, default=1000000,
                     help='Number of batches to run.')
-
 parser.add_argument('--log_device_placement', type=bool, default=False,
                     help='Whether to log device placement.')
 
-parser.add_argument('--log_frequency', type=int, default=10,
+parser.add_argument('--log_frequency', type=int, default=100,
                     help='How often to log results to the console.')
 
 
 def train():
-  """Train CIFAR-10 for a number of steps."""
   with tf.Graph().as_default():
     global_step = tf.contrib.framework.get_or_create_global_step()
-
-    # Get images and labels for CIFAR-10.
+    
+    # Get images and labels for CIFAR.
     # Force input pipeline to CPU:0 to avoid operations sometimes ending up on
     # GPU and resulting in a slow down.
     with tf.device('/cpu:0'):
-      images, labels = cifar10.distorted_inputs()
+      images, labels = cifar.distorted_inputs(is_cifar10 = FLAGS.dataset == 'cifar-10')
 
     # Build a Graph that computes the logits predictions from the
     # inference model.
-    logits = cifar10.inference(images)
+    logits = cifar.inference(images)
 
     # Calculate loss.
-    loss = cifar10.loss(logits, labels)
+    loss = cifar.loss(logits, labels)
 
     # Build a Graph that trains the model with one batch of examples and
     # updates the model parameters.
-    train_op = cifar10.train(loss, global_step)
+    train_op = cifar.train(loss, global_step)
 
     class _LoggerHook(tf.train.SessionRunHook):
       """Logs loss and runtime."""
@@ -106,19 +89,22 @@ def train():
                                examples_per_sec, sec_per_batch))
     config = tf.ConfigProto(log_device_placement=FLAGS.log_device_placement)
     util.tf.gpu_config(config = config, allow_growth = True)
+    
     with tf.train.MonitoredTrainingSession(
         checkpoint_dir=FLAGS.train_dir,
         save_checkpoint_secs = 30,
         hooks=[tf.train.StopAtStepHook(last_step=FLAGS.max_steps),
                tf.train.NanTensorHook(loss),
                _LoggerHook()], config=config) as mon_sess:
-      while not mon_sess.should_stop():
-        mon_sess.run(train_op)
+        while not mon_sess.should_stop():
+            mon_sess.run(train_op)
 
 def main(argv=None):  # pylint: disable=unused-argument
-  train()
+    cifar.maybe_download_and_extract()
+    train()
 
 
 if __name__ == '__main__':
   FLAGS = parser.parse_args()
+  util.proc.set_proc_name('train_on_%s_%s'%(FLAGS.dataset, FLAGS.loss_type))
   tf.app.run()
