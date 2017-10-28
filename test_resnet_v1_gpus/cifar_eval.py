@@ -119,11 +119,12 @@ def evaluate():
         corrects = tf.cast(tf.equal(predicted, tf.cast(labels, tf.int64)), tf.int32)
         
         # Restore the moving average version of the learned variables for eval.
-        variable_averages = tf.train.ExponentialMovingAverage(
-                cifar.MOVING_AVERAGE_DECAY)
-        variables_to_restore = variable_averages.variables_to_restore()
-        saver = tf.train.Saver(variables_to_restore)
-
+        if FLAGS.using_moving_average:
+            variable_averages = tf.train.ExponentialMovingAverage(FLAGS.moving_average_decay)
+            variables_to_restore = variable_averages.variables_to_restore()
+            saver = tf.train.Saver(variables_to_restore)
+        else:
+            saver = tf.train.Saver()
         # Build the summary operation based on the TF collection of Summaries.
         summary_op = tf.summary.merge_all()
 

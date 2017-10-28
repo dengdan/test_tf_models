@@ -36,11 +36,8 @@ parser.add_argument('--log_device_placement', type=bool, default=False,
 
 parser.add_argument('--log_frequency', type=int, default=100,
                     help='How often to log results to the console.')
-parser.add_argument('--weight_decay', type = float, default = 0.0001)
-parser.add_argument('--momentum', type = float, default = 0.9)
 
 # Constants describing the training process.
-MOVING_AVERAGE_DECAY = 0.9999         # The decay to use for the moving average.
 LEARNING_RATE_DECAY_FACTOR = 0.1    # Learning rate decay factor.
 INITIAL_LEARNING_RATE = 0.1             # Initial learning rate.
 DECAY_STEPS = 200000 # decay rate for lr 
@@ -92,22 +89,23 @@ def train():
         with tf.device('/cpu:0'):
             images, labels = cifar.distorted_inputs(is_cifar10 = FLAGS.dataset == 'cifar-10')
         clone_scope = 'clone_%d'%(clone_idx)
-        with tf.variable_scope(clone_scope, reuse = reuse):
-            reuse = True
-            with tf.device(gpu):
-                logits = cifar.inference(images, is_training = True)
-                build_loss(logits, labels)
-                losses = tf.get_collection(tf.GraphKeys.LOSSES, clone_scope)
-                total_clone_loss = tf.add_n(losses) / FLAGS.num_gpus
-                total_loss += total_clone_loss
-                # gather regularization total_loss and add to clone_0 only
-                if clone_idx == 0:
-                    regularization_loss = tf.add_n(tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
-                    total_clone_loss = total_clone_loss + regularization_loss
-                    total_loss += regularization_loss
-                    # compute clone gradients
-                clone_gradients = optimizer.compute_gradients(total_clone_loss)
-                gradients.append(clone_gradients)
+        with tf.variable_scope(tf.get_variable_scope(), reuse = reuse):
+            with tf.name_scope(clone_scope) as clone_scope:
+                reuse = True
+                with tf.device(gpu):
+                    logits = cifar.inference(images, is_training = True)
+                    build_loss(logits, labels)
+                    losses = tf.get_collection(tf.GraphKeys.LOSSES, clone_scope)
+                    total_clone_loss = tf.add_n(losses) / FLAGS.num_gpus
+                    total_loss += total_clone_loss
+                    # gather regularization total_loss and add to clone_0 only
+                    if clone_idx == 0:
+                        regularization_loss = tf.add_n(tf.get_collection(tf.GraphKeys.REGULARIZATION_LOSSES))
+                        total_clone_loss = total_clone_loss + regularization_loss
+                        total_loss += regularization_loss
+                        # compute clone gradients
+                    clone_gradients = optimizer.compute_gradients(total_clone_loss)
+                    gradients.append(clone_gradients)
 
     grads = util.tf.sum_gradients(gradients)        
     # Apply gradients.
@@ -120,8 +118,7 @@ def train():
         
     # Track the moving averages of all trainable variables.
     if FLAGS.using_moving_average:
-        variable_averages = tf.train.ExponentialMovingAverage(
-                MOVING_AVERAGE_DECAY, global_step)
+        variable_averages = tf.train.ExponentialMovingAverage(FLAGS.moving_average_decay, global_step)
         variable_averages_op = variable_averages.apply(tf.trainable_variables())
         train_op.append(variable_averages_op)
         
@@ -129,7 +126,7 @@ def train():
                 train_op.append(tf.group(variable_averages_op))
             
     train_op = control_flow_ops.with_dependencies(train_op, total_loss, name='train_op')
-
+    
     class _LoggerHook(tf.train.SessionRunHook):
       """Logs total_loss and runtime."""
 

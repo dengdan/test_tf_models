@@ -324,3 +324,25 @@ def resnet_v1_200(inputs,
                    include_root_block=True, spatial_squeeze=spatial_squeeze,
                    reuse=reuse, scope=scope)
 resnet_v1_200.default_image_size = resnet_v1.default_image_size
+
+
+
+def resnet_v1_cifar(inputs,
+                 num_classes=None,
+                 is_training=True,
+                 global_pool=True,
+                 output_stride=None,
+                 spatial_squeeze=True,
+                 reuse=None,
+                 scope='resnet_v1_50'):
+  """ResNet-50 model of [1]. See resnet_v1() for arg and return description."""
+  blocks = [
+      resnet_v1_block('block1', base_depth=64, num_units=3, stride=2),
+      resnet_v1_block('block2', base_depth=128, num_units=4, stride=1),
+      resnet_v1_block('block3', base_depth=256, num_units=6, stride=2),
+  ]
+  return resnet_v1(inputs, blocks, num_classes, is_training,
+                   global_pool=global_pool, output_stride=output_stride,
+                   include_root_block=True, spatial_squeeze=spatial_squeeze,
+                   reuse=reuse, scope=scope)
+

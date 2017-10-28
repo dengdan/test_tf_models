@@ -37,10 +37,13 @@ parser.add_argument('--data_dir', type=str,
                                         help='Path to the CIFAR data directory.')
 parser.add_argument('--dataset', type=str,
                                         help='cifar10 or 100.')
-parser.add_argument('--apply_batch_norm', type = bool, 
+parser.add_argument('--apply_batch_norm', type = bool, default = True,
                                         help = 'whether to use batch norm')
-parser.add_argument('--using_moving_average', type = bool, default = True,
+parser.add_argument('--using_moving_average', type = bool, default = False,
                                         help = 'whether to use exponentional moving average')
+parser.add_argument('--moving_average_decay', type = float, default = 0.9999)
+parser.add_argument('--weight_decay', type = float, default = 0.0001)
+parser.add_argument('--momentum', type = float, default = 0.9)
                                                                                 
 # Global constants describing the CIFAR data set.
 IMAGE_SIZE = cifar_input.IMAGE_SIZE
@@ -141,14 +144,39 @@ def inference(images, is_training):
     # If we only ran this model on a single GPU, we could simplify this function
     # by replacing all instances of tf.get_variable() with tf.Variable().
     #
+    
     FLAGS = parser.parse_args()
     # conv1
+    """
     import resnet_v1, resnet_utils
     with slim.arg_scope(resnet_utils.resnet_arg_scope(apply_batch_norm = FLAGS.apply_batch_norm)):
             net, _ = resnet_v1.resnet_v1_50(images, is_training = is_training)
-            logits = slim.conv2d(net, get_num_classes(), [1, 1], scope = 'score', activation_fn = None,
-                                                        padding = 'VALID'
+            logits = slim.conv2d(net, get_num_classes(), [1, 1], scope = 'score', 
+                    activation_fn = None,  padding = 'VALID'
                 )
+    logits = logits[:, 0, 0, :]
+    """
+    with slim.arg_scope([slim.conv2d], weights_regularizer = slim.l2_regularizer(FLAGS.weight_decay)):
+        with slim.arg_scope([slim.conv2d, slim.max_pool2d], padding='SAME'):
+                # Block1
+                net = slim.conv2d(images, 16, [3, 3], scope='conv1')
+                net = slim.max_pool2d(net, [2, 2], scope='pool1')
+
+                # Block 2.
+                net = slim.conv2d(net, 32, [3, 3], scope='conv2')
+                net = slim.max_pool2d(net, [2, 2], scope='pool2')
+
+                # Block 3.
+                net = slim.conv2d(net, 64, [3, 3], scope='conv3')
+                net = slim.max_pool2d(net, [2, 2], scope='pool3')
+
+                # Block 4.
+                net = slim.conv2d(net, 128, [3, 3], scope='conv4')
+                net = slim.max_pool2d(net, [2, 2], scope='pool4')
+                
+                logits = slim.conv2d(net, get_num_classes(), [2, 2], scope = 'score', activation_fn = None,
+                                                padding = 'VALID'
+        )
     logits = logits[:, 0, 0, :]
     return logits
 
