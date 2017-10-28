@@ -63,7 +63,6 @@ def build_loss(logits, labels):
     return loss
 
 
-
 def train():
   with tf.Graph().as_default():
     global_step = tf.contrib.framework.get_or_create_global_step()
@@ -79,6 +78,8 @@ def train():
     
     lr = tf.constant(INITIAL_LEARNING_RATE)
     optimizer = tf.train.MomentumOptimizer(lr, momentum = FLAGS.momentum)
+#     optimizer = tf.train.GradientDescentOptimizer(lr)
+
     tf.summary.scalar('learning_rate', lr)
     
     total_loss = 0
@@ -108,14 +109,16 @@ def train():
                     gradients.append(clone_gradients)
 
     grads = util.tf.sum_gradients(gradients)        
-    # Apply gradients.
-    apply_gradient_op = optimizer.apply_gradients(grads, global_step=global_step)
     
-    train_op = [apply_gradient_op]
+    train_op = []
     batch_norm_update_op = util.tf.get_update_op()
     if batch_norm_update_op is not None:
         train_op.append(batch_norm_update_op)
         
+    # Apply gradients.
+    apply_gradient_op = optimizer.apply_gradients(grads, global_step=global_step)
+    train_op.append(apply_gradient_op)
+    
     # Track the moving averages of all trainable variables.
     if FLAGS.using_moving_average:
         variable_averages = tf.train.ExponentialMovingAverage(FLAGS.moving_average_decay, global_step)

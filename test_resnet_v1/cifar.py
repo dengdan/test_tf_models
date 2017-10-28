@@ -33,22 +33,16 @@ parser = argparse.ArgumentParser()
 # Basic model parameters.
 parser.add_argument('--batch_size', type=int, default=128,
                                         help='Number of images to process in a batch.')
+parser.add_argument('--weight_decay', type = float, default = 0.0005)
 parser.add_argument('--data_dir', type=str,
                                         help='Path to the CIFAR data directory.')
 parser.add_argument('--dataset', type=str,
                                         help='cifar10 or 100.')
-parser.add_argument('--apply_batch_norm', type = bool, default = True,
-                                        help = 'whether to use batch norm')
-parser.add_argument('--using_moving_average', type = bool, default = False,
-                                        help = 'whether to use exponentional moving average')
-parser.add_argument('--moving_average_decay', type = float, default = 0.9999)
-parser.add_argument('--weight_decay', type = float, default = 0.0001)
-parser.add_argument('--momentum', type = float, default = 0.9)
-                                                                                
 # Global constants describing the CIFAR data set.
 IMAGE_SIZE = cifar_input.IMAGE_SIZE
 NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN = cifar_input.NUM_EXAMPLES_PER_EPOCH_FOR_TRAIN
 NUM_EXAMPLES_PER_EPOCH_FOR_EVAL = cifar_input.NUM_EXAMPLES_PER_EPOCH_FOR_EVAL
+
 
 
 def get_data_url():
@@ -143,42 +137,37 @@ def inference(images, is_training):
     # If we only ran this model on a single GPU, we could simplify this function
     # by replacing all instances of tf.get_variable() with tf.Variable().
     #
-    
     FLAGS = parser.parse_args()
     # conv1
     import resnet_v1, resnet_utils
-    with slim.arg_scope(resnet_utils.resnet_arg_scope(apply_batch_norm = FLAGS.apply_batch_norm)):
-            net, _ = resnet_v1.resnet_v1_50(images, is_training = is_training)
-            logits = slim.conv2d(net, get_num_classes(), [1, 1], scope = 'score', 
-                    activation_fn = None,  padding = 'VALID'
+    with slim.arg_scope(resnet_utils.resnet_arg_scope()):
+        net, _ = resnet_v1.resnet_v1_50(images, is_training = is_training)
+        logits = slim.conv2d(net, get_num_classes(), [1, 1], scope = 'score', activation_fn = None,
+                                                        padding = 'VALID'
                 )
     logits = logits[:, 0, 0, :]
-    """
-    with slim.arg_scope([slim.conv2d], weights_regularizer = slim.l2_regularizer(FLAGS.weight_decay)):
-        with slim.arg_scope([slim.conv2d, slim.max_pool2d], padding='SAME'):
-                # Block1
-                net = slim.conv2d(images, 16, [3, 3], scope='conv1')
-                net = slim.max_pool2d(net, [2, 2], scope='pool1')
-
-                # Block 2.
-                net = slim.conv2d(net, 32, [3, 3], scope='conv2')
-                net = slim.max_pool2d(net, [2, 2], scope='pool2')
-
-                # Block 3.
-                net = slim.conv2d(net, 64, [3, 3], scope='conv3')
-                net = slim.max_pool2d(net, [2, 2], scope='pool3')
-
-                # Block 4.
-                net = slim.conv2d(net, 128, [3, 3], scope='conv4')
-                net = slim.max_pool2d(net, [2, 2], scope='pool4')
-                
-                logits = slim.conv2d(net, get_num_classes(), [2, 2], scope = 'score', activation_fn = None,
-                                                padding = 'VALID'
-        )
-    logits = logits[:, 0, 0, :]
-    """
     return logits
 
+
+
+
+def loss(logits, labels):
+    FLAGS = parser.parse_args()
+    
+    ce_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
+            labels = labels, logits = logits)
+    # find the most wrongly classified examples:
+    num_examples = tf.reduce_prod(labels.shape)
+    n_selected = tf.cast(num_examples / 2, tf.int32)
+    vals, _ = tf.nn.top_k(ce_loss, k = n_selected)
+    th = vals[-1]
+    selected_mask = ce_loss >= th
+    loss_weight = tf.cast(selected_mask, tf.float32) 
+    loss = tf.reduce_sum(ce_loss * loss_weight) / tf.reduce_sum(loss_weight)
+                    
+    tf.add_to_collection('losses', loss)
+
+    return tf.add_n(tf.get_collection('losses'), name='total_loss')
 
 
 def _add_loss_summaries(total_loss):
@@ -208,7 +197,67 @@ def _add_loss_summaries(total_loss):
     return loss_averages_op
 
 
+def train(total_loss, global_step):
+    """Train CIFAR model.
 
+    Create an optimizer and apply to all trainable variables. Add moving
+    average for all trainable variables.
+
+    Args:
+        total_loss: Total loss from loss().
+        global_step: Integer Variable counting the number of training steps
+            processed.
+    Returns:
+        train_op: op for training.
+    """
+    # Variables that affect learning rate.
+    FLAGS = parser.parse_args()
+    decay_steps = DECAY_STEPS
+
+    # Decay the learning rate exponentially based on the number of steps.
+    lr = INITIAL_LEARNING_RATE
+    lr = tf.train.exponential_decay(lr,
+                global_step,
+                decay_steps,
+                LEARNING_RATE_DECAY_FACTOR,
+                staircase=True)
+    tf.summary.scalar('learning_rate', lr)
+
+    # Generate moving averages of all losses and associated summaries.
+    loss_averages_op = _add_loss_summaries(total_loss)
+    
+    
+    train_ops = []
+    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+    if update_ops:
+        train_ops.append(tf.group(*update_ops))
+        
+    # Compute gradients.
+    with tf.control_dependencies([loss_averages_op]):
+        opt = tf.train.GradientDescentOptimizer(lr)
+        grads = opt.compute_gradients(total_loss)
+
+    # Apply gradients.
+    apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)
+    train_ops.append(apply_gradient_op)
+    # Add histograms for trainable variables.
+    for var in tf.trainable_variables():
+        tf.summary.histogram(var.op.name, var)
+
+    # Add histograms for gradients.
+    for grad, var in grads:
+        if grad is not None:
+            tf.summary.histogram(var.op.name + '/gradients', grad)
+
+    # Track the moving averages of all trainable variables.
+#     variable_averages = tf.train.ExponentialMovingAverage(
+#             MOVING_AVERAGE_DECAY, global_step)
+#     variables_averages_op = variable_averages.apply(tf.trainable_variables())
+
+    with tf.control_dependencies(train_ops):
+        train_op = tf.no_op(name='train')
+
+    return train_op
 
 
 def maybe_download_and_extract():
